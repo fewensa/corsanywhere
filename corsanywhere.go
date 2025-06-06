@@ -3,11 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -77,6 +79,7 @@ func corsProxy(requireOrigin bool) http.Handler {
 	modifyResponse := func(resp *http.Response) error {
 		// Handle 307/308 redirect if enabled
 		redirectCount := 0
+		previousURL := resp.Request.URL.String()
 		for enableRedirect && (resp.StatusCode == 307 || resp.StatusCode == 308) {
 			if redirectCount >= maxRedirects {
 				return fmt.Errorf("maximum redirect limit (%d) reached", maxRedirects)
@@ -100,7 +103,6 @@ func corsProxy(requireOrigin bool) http.Handler {
 					Scheme: orig.Scheme,
 					Host:   orig.Host,
 				}
-				// url.Parse handles both absolute and relative URLs correctly
 				u, err := url.Parse(location)
 				if err != nil {
 					return err
@@ -108,8 +110,19 @@ func corsProxy(requireOrigin bool) http.Handler {
 				redirectURL = base.ResolveReference(u).String()
 			}
 
+			// If redirectURL is the same as previous, break and set status 400
+			if redirectURL == previousURL {
+				resp.StatusCode = 400
+				resp.Status = "400 Bad Request"
+				resp.Body = io.NopCloser(strings.NewReader(
+					"redirect loop detected: redirect URL is the same as previous: " + redirectURL,
+				))
+				break
+			}
+			previousURL = redirectURL
+
 			client := &http.Client{
-				Timeout: 15 * time.Second,
+				Timeout: 30 * time.Second,
 				CheckRedirect: func(req *http.Request, via []*http.Request) error {
 					return http.ErrUseLastResponse
 				},
