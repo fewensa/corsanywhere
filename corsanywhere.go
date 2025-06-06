@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	flags         = flag.NewFlagSet("corsanywhere", flag.ExitOnError)
-	fPort         = flags.String("port", "8080", "Local port to listen for this corsanywhere service")
+	flags          = flag.NewFlagSet("corsanywhere", flag.ExitOnError)
+	fPort          = flags.String("port", "8080", "Local port to listen for this corsanywhere service")
 	fRequireOrigin = flags.Bool("require-origin", true, "Require Origin header on requests")
 )
 
@@ -43,10 +43,16 @@ func CORSAnywhereHandler(requireOrigin bool) http.Handler {
 	return r
 }
 
+func hasScheme(rawurl string) bool {
+	return len(rawurl) > 0 && (rawurl[:7] == "http://" || rawurl[:8] == "https://")
+}
+
 func corsProxy(requireOrigin bool) http.Handler {
 	director := func(req *http.Request) {
 		corsURL := chi.URLParam(req, "*")
-
+		if !hasScheme(corsURL) {
+			corsURL = "http://" + corsURL
+		}
 		u, err := url.Parse(corsURL)
 		if err != nil {
 			return
@@ -86,7 +92,9 @@ func corsProxy(requireOrigin bool) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		corsURL := chi.URLParam(r, "*")
-
+		if !hasScheme(corsURL) {
+			corsURL = "http://" + corsURL
+		}
 		// Verify cors proxy url is valid
 		_, err := url.Parse(corsURL)
 		if err != nil {
