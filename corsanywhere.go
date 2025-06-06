@@ -50,7 +50,7 @@ func CORSAnywhereHandler(requireOrigin bool, timeout time.Duration) http.Handler
 }
 
 func hasScheme(rawurl string) bool {
-	return len(rawurl) > 0 && (rawurl[:7] == "http://" || rawurl[:8] == "https://")
+	return strings.HasPrefix(rawurl, "http://") || strings.HasPrefix(rawurl, "https://")
 }
 
 func corsProxy(requireOrigin bool, timeout time.Duration) http.Handler {
