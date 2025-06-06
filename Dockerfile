@@ -2,9 +2,10 @@ FROM alpine:3.22 AS builder
 
 RUN apk --no-cache add go
 
-ADD . /code
+COPY go.mod go.sum /code/
 WORKDIR /code
-
+RUN go mod download
+COPY . /code
 RUN go build
 
 RUN chmod +x /code/corsanywhere
