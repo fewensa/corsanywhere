@@ -79,15 +79,34 @@ func corsProxy(requireOrigin bool) http.Handler {
 			if location != "" {
 				// Close the original response body
 				resp.Body.Close()
-				// Make a new request to the redirect location
+
+				// Determine the redirect URL
+				var redirectURL string
+				if hasScheme(location) {
+					// absolute URL with scheme, use it directly
+					redirectURL = location
+				} else {
+					// relative URL, resolve it against the original request URL
+					orig := resp.Request.URL
+					base := &url.URL{
+						Scheme: orig.Scheme,
+						Host:   orig.Host,
+					}
+					// url.Parse handles both absolute and relative URLs correctly
+					u, err := url.Parse(location)
+					if err != nil {
+						return err
+					}
+					redirectURL = base.ResolveReference(u).String()
+				}
+
 				client := &http.Client{
 					Timeout: 15 * time.Second,
-					// Do not follow redirects automatically
 					CheckRedirect: func(req *http.Request, via []*http.Request) error {
 						return http.ErrUseLastResponse
 					},
 				}
-				req, err := http.NewRequest(resp.Request.Method, location, nil)
+				req, err := http.NewRequest(resp.Request.Method, redirectURL, nil)
 				if err != nil {
 					return err
 				}
@@ -101,7 +120,6 @@ func corsProxy(requireOrigin bool) http.Handler {
 				if err != nil {
 					return err
 				}
-				// Copy the new response back to the original response
 				*resp = *newResp
 			}
 		}
