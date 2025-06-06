@@ -21,6 +21,7 @@ var (
 	fRequireOrigin  = flags.Bool("require-origin", true, "Require Origin header on requests")
 	fEnableRedirect = flags.Bool("enable-redirect", false, "Auto follow 307/308 redirect")
 	fMaxRedirects   = flags.Int("max-redirects", 3, "Maximum number of redirects to follow")
+	fTimeout        = flags.Int("timeout", 30, "Timeout (seconds) for HTTP client and transport")
 )
 
 func main() {
@@ -28,22 +29,23 @@ func main() {
 
 	port := *fPort
 	requireOrigin := *fRequireOrigin
+	timeout := time.Duration(*fTimeout) * time.Second
 
 	fmt.Printf("CORS Anywhere started at http://localhost:%s\n", port)
 
-	err := http.ListenAndServe(fmt.Sprintf(":%s", port), CORSAnywhereHandler(requireOrigin))
+	err := http.ListenAndServe(fmt.Sprintf(":%s", port), CORSAnywhereHandler(requireOrigin, timeout))
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 }
 
-func CORSAnywhereHandler(requireOrigin bool) http.Handler {
+func CORSAnywhereHandler(requireOrigin bool, timeout time.Duration) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(corsAnywhereUsage))
 	})
-	r.Handle("/*", corsProxy(requireOrigin))
+	r.Handle("/*", corsProxy(requireOrigin, timeout))
 	return r
 }
 
@@ -51,7 +53,7 @@ func hasScheme(rawurl string) bool {
 	return len(rawurl) > 0 && (rawurl[:7] == "http://" || rawurl[:8] == "https://")
 }
 
-func corsProxy(requireOrigin bool) http.Handler {
+func corsProxy(requireOrigin bool, timeout time.Duration) http.Handler {
 	enableRedirect := *fEnableRedirect
 	maxRedirects := *fMaxRedirects
 
@@ -122,7 +124,7 @@ func corsProxy(requireOrigin bool) http.Handler {
 			previousURL = redirectURL
 
 			client := &http.Client{
-				Timeout: 30 * time.Second,
+				Timeout: timeout,
 				CheckRedirect: func(req *http.Request, via []*http.Request) error {
 					return http.ErrUseLastResponse
 				},
@@ -158,10 +160,10 @@ func corsProxy(requireOrigin bool) http.Handler {
 	proxy.Transport = &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		Dial: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
+			Timeout:   timeout,
+			KeepAlive: timeout,
 		}).Dial,
-		TLSHandshakeTimeout: 10 * time.Second,
+		TLSHandshakeTimeout: timeout,
 		// TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 	}
 
