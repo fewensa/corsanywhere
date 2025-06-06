@@ -18,6 +18,7 @@ var (
 	fPort           = flags.String("port", "8080", "Local port to listen for this corsanywhere service")
 	fRequireOrigin  = flags.Bool("require-origin", true, "Require Origin header on requests")
 	fEnableRedirect = flags.Bool("enable-redirect", false, "Auto follow 307/308 redirect")
+	fMaxRedirects   = flags.Int("max-redirects", 3, "Maximum number of redirects to follow")
 )
 
 func main() {
@@ -50,6 +51,7 @@ func hasScheme(rawurl string) bool {
 
 func corsProxy(requireOrigin bool) http.Handler {
 	enableRedirect := *fEnableRedirect
+	maxRedirects := *fMaxRedirects
 
 	director := func(req *http.Request) {
 		corsURL := chi.URLParam(req, "*")
@@ -74,54 +76,60 @@ func corsProxy(requireOrigin bool) http.Handler {
 
 	modifyResponse := func(resp *http.Response) error {
 		// Handle 307/308 redirect if enabled
-		if enableRedirect && (resp.StatusCode == 307 || resp.StatusCode == 308) {
-			location := resp.Header.Get("Location")
-			if location != "" {
-				// Close the original response body
-				resp.Body.Close()
-
-				// Determine the redirect URL
-				var redirectURL string
-				if hasScheme(location) {
-					// absolute URL with scheme, use it directly
-					redirectURL = location
-				} else {
-					// relative URL, resolve it against the original request URL
-					orig := resp.Request.URL
-					base := &url.URL{
-						Scheme: orig.Scheme,
-						Host:   orig.Host,
-					}
-					// url.Parse handles both absolute and relative URLs correctly
-					u, err := url.Parse(location)
-					if err != nil {
-						return err
-					}
-					redirectURL = base.ResolveReference(u).String()
-				}
-
-				client := &http.Client{
-					Timeout: 15 * time.Second,
-					CheckRedirect: func(req *http.Request, via []*http.Request) error {
-						return http.ErrUseLastResponse
-					},
-				}
-				req, err := http.NewRequest(resp.Request.Method, redirectURL, nil)
-				if err != nil {
-					return err
-				}
-				// Copy headers from the original response to the new request
-				for k, v := range resp.Request.Header {
-					for _, vv := range v {
-						req.Header.Add(k, vv)
-					}
-				}
-				newResp, err := client.Do(req)
-				if err != nil {
-					return err
-				}
-				*resp = *newResp
+		redirectCount := 0
+		for enableRedirect && (resp.StatusCode == 307 || resp.StatusCode == 308) {
+			if redirectCount >= maxRedirects {
+				return fmt.Errorf("maximum redirect limit (%d) reached", maxRedirects)
 			}
+			location := resp.Header.Get("Location")
+			if location == "" {
+				break
+			}
+			// Close the original response body
+			resp.Body.Close()
+
+			// Determine the redirect URL
+			var redirectURL string
+			if hasScheme(location) {
+				// absolute URL with scheme, use it directly
+				redirectURL = location
+			} else {
+				// relative URL, resolve it against the original request URL
+				orig := resp.Request.URL
+				base := &url.URL{
+					Scheme: orig.Scheme,
+					Host:   orig.Host,
+				}
+				// url.Parse handles both absolute and relative URLs correctly
+				u, err := url.Parse(location)
+				if err != nil {
+					return err
+				}
+				redirectURL = base.ResolveReference(u).String()
+			}
+
+			client := &http.Client{
+				Timeout: 15 * time.Second,
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					return http.ErrUseLastResponse
+				},
+			}
+			req, err := http.NewRequest(resp.Request.Method, redirectURL, nil)
+			if err != nil {
+				return err
+			}
+			// Copy headers from the original response to the new request
+			for k, v := range resp.Request.Header {
+				for _, vv := range v {
+					req.Header.Add(k, vv)
+				}
+			}
+			newResp, err := client.Do(req)
+			if err != nil {
+				return err
+			}
+			*resp = *newResp
+			redirectCount++
 		}
 
 		resp.Header.Set("access-control-allow-origin", "*")
