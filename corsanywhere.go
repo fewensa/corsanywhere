@@ -14,34 +14,36 @@ import (
 )
 
 var (
-	flags = flag.NewFlagSet("corsanywhere", flag.ExitOnError)
-	fPort = flags.String("port", "8080", "Local port to listen for this corsanywhere service")
+	flags         = flag.NewFlagSet("corsanywhere", flag.ExitOnError)
+	fPort         = flags.String("port", "8080", "Local port to listen for this corsanywhere service")
+	fRequireOrigin = flags.Bool("require-origin", true, "Require Origin header on requests")
 )
 
 func main() {
 	flags.Parse(os.Args[1:])
 
 	port := *fPort
+	requireOrigin := *fRequireOrigin
 
 	fmt.Printf("CORS Anywhere started at http://localhost:%s\n", port)
 
-	err := http.ListenAndServe(fmt.Sprintf(":%s", port), CORSAnywhereHandler())
+	err := http.ListenAndServe(fmt.Sprintf(":%s", port), CORSAnywhereHandler(requireOrigin))
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 }
 
-func CORSAnywhereHandler() http.Handler {
+func CORSAnywhereHandler(requireOrigin bool) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(corsAnywhereUsage))
 	})
-	r.Handle("/*", corsProxy())
+	r.Handle("/*", corsProxy(requireOrigin))
 	return r
 }
 
-func corsProxy() http.Handler {
+func corsProxy(requireOrigin bool) http.Handler {
 	director := func(req *http.Request) {
 		corsURL := chi.URLParam(req, "*")
 
@@ -98,8 +100,8 @@ func corsProxy() http.Handler {
 			return
 		}
 
-		// Require origin header
-		if r.Header.Get("origin") == "" {
+		// Require origin header (if enabled)
+		if requireOrigin && r.Header.Get("origin") == "" {
 			respondError(w, r, "origin header is required on the request")
 			return
 		}
