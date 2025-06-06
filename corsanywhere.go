@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	flags          = flag.NewFlagSet("corsanywhere", flag.ExitOnError)
-	fPort          = flags.String("port", "8080", "Local port to listen for this corsanywhere service")
-	fRequireOrigin = flags.Bool("require-origin", true, "Require Origin header on requests")
+	flags           = flag.NewFlagSet("corsanywhere", flag.ExitOnError)
+	fPort           = flags.String("port", "8080", "Local port to listen for this corsanywhere service")
+	fRequireOrigin  = flags.Bool("require-origin", true, "Require Origin header on requests")
+	fEnableRedirect = flags.Bool("enable-redirect", false, "Auto follow 307/308 redirect")
 )
 
 func main() {
@@ -48,6 +49,8 @@ func hasScheme(rawurl string) bool {
 }
 
 func corsProxy(requireOrigin bool) http.Handler {
+	enableRedirect := *fEnableRedirect
+
 	director := func(req *http.Request) {
 		corsURL := chi.URLParam(req, "*")
 		if !hasScheme(corsURL) {
@@ -70,6 +73,39 @@ func corsProxy(requireOrigin bool) http.Handler {
 	}
 
 	modifyResponse := func(resp *http.Response) error {
+		// Handle 307/308 redirect if enabled
+		if enableRedirect && (resp.StatusCode == 307 || resp.StatusCode == 308) {
+			location := resp.Header.Get("Location")
+			if location != "" {
+				// Close the original response body
+				resp.Body.Close()
+				// Make a new request to the redirect location
+				client := &http.Client{
+					Timeout: 15 * time.Second,
+					// Do not follow redirects automatically
+					CheckRedirect: func(req *http.Request, via []*http.Request) error {
+						return http.ErrUseLastResponse
+					},
+				}
+				req, err := http.NewRequest(resp.Request.Method, location, nil)
+				if err != nil {
+					return err
+				}
+				// Copy headers from the original response to the new request
+				for k, v := range resp.Request.Header {
+					for _, vv := range v {
+						req.Header.Add(k, vv)
+					}
+				}
+				newResp, err := client.Do(req)
+				if err != nil {
+					return err
+				}
+				// Copy the new response back to the original response
+				*resp = *newResp
+			}
+		}
+
 		resp.Header.Set("access-control-allow-origin", "*")
 		resp.Header.Set("access-control-max-age", "3000000")
 		return nil
